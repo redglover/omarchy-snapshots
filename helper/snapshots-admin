@@ -73,7 +73,20 @@ diff)
   done
   exec snapper -c "$config" diff "$2..$3" "$4"
   ;;
+undo)
+  (( $# >= 3 )) || die "usage: snapshots-admin undo <config> <n> <path>..."
+  valid_config "$1"
+  valid_id "$2"
+  (( 10#$2 > 0 )) || die "snapshot 0 is the live system"
+  n=$2
+  shift 2
+  valid_paths "$n" 0 "$@"
+  # Snapshot the current state first so the restore itself can be undone.
+  before=$(snapper -c "$config" create -c number -p -d "before restore from #$n")
+  snapper -c "$config" undochange "$n..0" "$@"
+  echo "$before"
+  ;;
 *)
-  die "usage: snapshots-admin diff <config> <a> <b> <path>"
+  die "usage: snapshots-admin diff <config> <a> <b> <path> | undo <config> <n> <path>..."
   ;;
 esac

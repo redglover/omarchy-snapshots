@@ -104,6 +104,24 @@ else
   fail "diff: file over 256 KiB (exit $code)"
 fi
 
+# --- snapshots-admin undo
+rejects "undo: '..' path" "$ADMIN" undo root 5 /etc/motd /etc/../etc/shadow
+rejects "undo: relative path" "$ADMIN" undo root 5 etc/motd
+rejects "undo: one path absent from status" "$ADMIN" undo root 5 /etc/motd /etc/shadow
+rejects "undo: no paths" "$ADMIN" undo root 5
+rejects "undo: snapshot 0" "$ADMIN" undo root 0 /etc/motd
+rejects "undo: non-integer id" "$ADMIN" undo root 5x /etc/motd
+accepts "undo: undochange gets every path as its own argument" $'-c\nroot\nundochange\n5..0\n/etc/motd\n/etc/with space\n/etc/gone' \
+  "$ADMIN" undo root 5 /etc/motd "/etc/with space" /etc/gone
+create_line=$(grep -nx create "$SNAPPER_LOG" | cut -d: -f1)
+undo_line=$(grep -nx undochange "$SNAPPER_LOG" | cut -d: -f1)
+if [[ -n $create_line && -n $undo_line ]] && (( create_line < undo_line )) \
+  && grep -Fxq "before restore from #5" "$SNAPPER_LOG" && [[ $(cat "$T/out") == 42 ]]; then
+  pass "undo: creates a 'before restore' snapshot first and prints its number"
+else
+  fail "undo: 'before restore' snapshot"
+fi
+
 echo
 if (( failures )); then
   echo "helper-args-test: $failures failed"

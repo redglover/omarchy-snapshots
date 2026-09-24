@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
@@ -38,6 +39,13 @@ Panel {
   property string diffPath: ""
   property var diff: null
   property int diffReturnCursor: 0
+  property var checked: ({})
+  readonly property var checkedPaths: Object.keys(checked).sort()
+
+  property string confirmAction: ""
+  property string confirmMessage: ""
+  property string confirmLabel: ""
+  property bool enterPressed: false
   readonly property string view: setupState !== "ok" ? "setup"
     : (diffPath !== "" ? "diff" : (selected ? "changes" : "list"))
 
@@ -72,6 +80,7 @@ Panel {
     if (!row) return
     selected = row
     changes = []
+    checked = ({})
     filter = ""
     expanded = ({})
     cursor = 0
@@ -97,6 +106,52 @@ Panel {
     if (diffPath === "" || diffProc.running) return
     diffProc.path = diffPath
     diffProc.start(["pkexec", adminHelper, "diff", config, String(selected.number), "0", diffPath])
+  }
+
+  function toggleChecked(path) {
+    var next = Object.assign({}, checked)
+    if (next[path]) delete next[path]
+    else next[path] = true
+    checked = next
+  }
+
+  function notify(headline, description) {
+    Quickshell.execDetached(["omarchy-notification-send", "-g", "\u{f006f}", headline, description])
+  }
+
+  function ask(action, message, label) {
+    confirmAction = action
+    confirmMessage = message
+    confirmLabel = label
+    confirmDialog.selectedIndex = 0
+    confirmDialog.forceActiveFocus()
+  }
+
+  function dismissConfirm() {
+    confirmAction = ""
+    keyCatcher.forceActiveFocus()
+  }
+
+  function confirmed() {
+    var action = confirmAction
+    dismissConfirm()
+    if (action === "restore") restoreChecked()
+  }
+
+  function askRestore() {
+    var paths = checkedPaths
+    if (!selected || paths.length === 0) return
+    var shown = paths.slice(0, 8).join("\n")
+    if (paths.length > 8) shown += "\n… and " + (paths.length - 8) + " more"
+    ask("restore", "Restore " + paths.length + (paths.length === 1 ? " file" : " files") + " from snapshot #" + selected.number
+      + "? The current versions are saved in a new snapshot first.\n\n" + shown, "Restore")
+  }
+
+  function restoreChecked() {
+    if (undoProc.running) return
+    undoProc.number = selected.number
+    undoProc.count = checkedPaths.length
+    undoProc.start(["pkexec", adminHelper, "undo", config, String(selected.number)].concat(checkedPaths))
   }
 
   function toggleGroup(dir, collapsed) {
@@ -129,6 +184,16 @@ Panel {
       return
     }
     cursor = Math.max(0, Math.min(itemCount() - 1, cursor + delta))
+  }
+
+  // PanelKeyCatcher sends Enter and Space both as activate; Enter also
+  // fires returnRequested first, which is how Space gets to mean "select".
+  function keyActivate() {
+    var enter = enterPressed
+    enterPressed = false
+    var item = view === "changes" ? treeItems[cursor] : null
+    if (!enter && item && item.kind === "file") toggleChecked(item.path)
+    else activate()
   }
 
   function activate() {
@@ -198,6 +263,25 @@ Panel {
   }
 
   HelperProc {
+    id: undoProc
+    property int number: -1
+    property int count: 0
+    onDone: function(code, out, err) {
+      var what = count + (count === 1 ? " file" : " files")
+      if (code === 0) {
+        root.notify("Restored " + what, "From snapshot #" + number + ". The previous state is saved as snapshot #" + out.trim() + ".")
+        root.checked = ({})
+        root.error = ""
+      } else {
+        root.failed("Restore", err)
+        root.notify("Restore failed", root.error)
+      }
+      root.loadList()
+      root.loadChanges()
+    }
+  }
+
+  HelperProc {
     id: setupProc
     onDone: function(code, out, err) {
       if (code !== 0) root.failed("Setup", err)
@@ -238,14 +322,15 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(440))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight)
+    contentHeight: panel.fittedContentHeight(Math.max(column.implicitHeight, root.confirmAction !== "" ? Style.space(320) : 0))
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: searchField.activeFocus
+      blocked: searchField.activeFocus || root.confirmAction !== ""
       onMoveRequested: function(dx, dy) { if (dy !== 0) root.moveCursor(dy) }
-      onActivateRequested: root.activate()
+      onReturnRequested: root.enterPressed = true
+      onActivateRequested: root.keyActivate()
       onCloseRequested: root.back()
       onTextKey: function(t) { if (t === "/" && root.view === "changes") searchField.forceActiveFocus() }
       onTabRequested: function(direction) { root.switchPanel(direction) }
@@ -501,7 +586,33 @@ Panel {
             onCurrentIndexChanged: if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
             delegate: TreeRow { }
           }
+
+          Button {
+            visible: root.checkedPaths.length > 0
+            text: "Restore " + root.checkedPaths.length + (root.checkedPaths.length === 1 ? " file" : " files")
+              + " from snapshot #" + (root.selected ? root.selected.number : "")
+            iconText: "\u{f0bea}"
+            iconSpinning: undoProc.running
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+            bordered: true
+            onClicked: root.askRestore()
+          }
         }
+      }
+
+      ConfirmDialog {
+        id: confirmDialog
+        anchors.fill: parent
+        z: 10
+        opened: root.confirmAction !== ""
+        message: root.confirmMessage
+        confirmText: root.confirmLabel
+        foreground: root.bar.foreground
+        fontFamily: root.bar.fontFamily
+        Keys.onPressed: function(event) { event.accepted = confirmDialog.handleKey(event) }
+        onCanceled: root.dismissConfirm()
+        onConfirmed: root.confirmed()
       }
     }
   }
@@ -609,9 +720,27 @@ Panel {
       anchors.left: parent.left
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
-      anchors.leftMargin: Style.spacing.rowPaddingX + (item.isGroup ? 0 : Style.space(16))
+      anchors.leftMargin: Style.spacing.rowPaddingX + (item.isGroup ? 0 : Style.space(8))
       anchors.rightMargin: Style.spacing.rowPaddingX
       spacing: Style.space(8)
+
+      Text {
+        id: checkbox
+        textFormat: Text.PlainText
+        visible: !item.isGroup
+        width: visible ? Style.space(16) : 0
+        text: root.checked[item.modelData.path] ? "\u{f0132}" : "\u{f0131}"
+        color: root.checked[item.modelData.path] ? Color.accent : root.dim
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.icon
+
+        MouseArea {
+          anchors.fill: parent
+          anchors.margins: -Style.space(4)
+          cursorShape: Qt.PointingHandCursor
+          onClicked: root.toggleChecked(item.modelData.path)
+        }
+      }
 
       Text {
         id: marker
@@ -627,7 +756,7 @@ Panel {
 
       Text {
         textFormat: Text.PlainText
-        width: parent.width - marker.width - counts.width - parent.spacing * 2
+        width: parent.width - checkbox.width - marker.width - counts.width - parent.spacing * 3
         text: item.isGroup ? item.modelData.dir : item.modelData.path
         color: root.bar.foreground
         font.family: root.bar.fontFamily
