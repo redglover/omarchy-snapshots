@@ -3,6 +3,9 @@
 # Argument validation for the root helpers, run against a stub `snapper` on
 # PATH that records every call. Needs no root, snapper, or polkit.
 
+# Literal $(…) and backticks below are the point: they must reach snapper unexpanded.
+# shellcheck disable=SC2016
+
 set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd)

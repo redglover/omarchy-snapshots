@@ -209,7 +209,8 @@ Panel {
       diffPath = ""
       cursor = diffReturnCursor
     } else if (view === "changes") {
-      var index = rows.indexOf(selected)
+      var number = selected.number
+      var index = rows.findIndex(function(r) { return r.number === number })
       selected = null
       filter = ""
       cursor = Math.max(0, index)
@@ -782,6 +783,19 @@ Panel {
             bordered: true
             onClicked: root.askRestore()
           }
+        }
+
+        Text {
+          textFormat: Text.PlainText
+          width: parent.width
+          wrapMode: Text.WordWrap
+          color: root.dim
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.caption
+          text: root.view === "list" ? "↑↓ move · Enter open · n new · i important · x delete · Esc close"
+            : root.view === "changes" ? "↑↓ move · Enter open/expand · Space select · / search · Esc back"
+            : root.view === "diff" ? "↑↓ scroll · Esc back"
+            : "Enter set up · Esc close"
         }
       }
 
