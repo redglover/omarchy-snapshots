@@ -164,12 +164,16 @@ function classifyDiff(text, exitCode) {
   if (/^Binary files .* differ$/m.test(raw)) return { state: "binary", lines: [] }
   var lines = []
   var all = raw.split("\n")
+  // Inside a hunk, "--- x" is a removed "-- x" line (a Lua comment, say), not
+  // a file header; headers only reappear after a new "diff " line.
+  var inHunk = false
   for (var i = 0; i < all.length; i++) {
     var line = all[i]
     if (line === "" && i === all.length - 1) break
     var kind = "ctx"
-    if (/^(\+\+\+|---) /.test(line) || /^diff /.test(line)) kind = "meta"
-    else if (line.indexOf("@@") === 0) kind = "hunk"
+    if (/^diff /.test(line)) { kind = "meta"; inHunk = false }
+    else if (!inHunk && /^(\+\+\+|---) /.test(line)) kind = "meta"
+    else if (line.indexOf("@@") === 0) { kind = "hunk"; inHunk = true }
     else if (line.charAt(0) === "+") kind = "add"
     else if (line.charAt(0) === "-") kind = "del"
     lines.push({ kind: kind, text: line })
