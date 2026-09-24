@@ -48,6 +48,7 @@ Panel {
   property bool enterPressed: false
   property int bootedSnapshot: -1
   property bool promoteStarted: false
+  property var pendingDelete: null
   readonly property string view: setupState !== "ok" ? "setup"
     : (diffPath !== "" ? "diff" : (selected ? "changes" : "list"))
 
@@ -142,6 +143,7 @@ Panel {
     dismissConfirm()
     if (action === "restore") restoreChecked()
     else if (action === "promote") promote()
+    else if (action === "delete") manage(["delete", config].concat(snapshotNumbers(pendingDelete)))
     else if (action === "reboot") Quickshell.execDetached(["omarchy-system-reboot"])
   }
 
@@ -167,6 +169,33 @@ Panel {
     undoProc.number = selected.number
     undoProc.count = checkedPaths.length
     undoProc.start(["pkexec", adminHelper, "undo", config, String(selected.number)].concat(checkedPaths))
+  }
+
+  function snapshotNumbers(row) {
+    return row.post > 0 ? [String(row.number), String(row.post)] : [String(row.number)]
+  }
+
+  function manage(args) {
+    if (manageProc.running) return
+    manageProc.args = args
+    manageProc.start(["pkexec", adminHelper].concat(args))
+  }
+
+  function createSnapshot() {
+    var description = descField.text.trim()
+    if (description === "") description = "Manual snapshot"
+    manage(["create", config, description])
+  }
+
+  function askDelete(row) {
+    if (!row) return
+    pendingDelete = row
+    ask("delete", "Delete snapshot " + Model.numberLabel(row) + (row.description ? " (" + row.description + ")" : "")
+      + "? This can't be undone.", "Delete")
+  }
+
+  function toggleImportant(row) {
+    if (row) manage(["important", config, row.important ? "no" : "yes"].concat(snapshotNumbers(row)))
   }
 
   function toggleGroup(dir, collapsed) {
@@ -297,6 +326,23 @@ Panel {
   }
 
   HelperProc {
+    id: manageProc
+    property var args: []
+    onDone: function(code, out, err) {
+      if (code !== 0) {
+        root.failed(args[0] === "create" ? "Creating snapshot" : (args[0] === "delete" ? "Deleting snapshot" : "Updating snapshot"), err)
+      } else {
+        root.error = ""
+        if (args[0] === "create") {
+          descField.text = ""
+          root.notify("Snapshot #" + out.trim() + " created", args[2])
+        }
+      }
+      root.loadList()
+    }
+  }
+
+  HelperProc {
     id: bootedProc
     onDone: function(code, out, err) { if (code === 0) root.bootedSnapshot = Model.parseBooted(out) }
   }
@@ -347,12 +393,17 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: searchField.activeFocus || root.confirmAction !== ""
+      blocked: searchField.activeFocus || descField.activeFocus || root.confirmAction !== ""
       onMoveRequested: function(dx, dy) { if (dy !== 0) root.moveCursor(dy) }
       onReturnRequested: root.enterPressed = true
       onActivateRequested: root.keyActivate()
       onCloseRequested: root.back()
-      onTextKey: function(t) { if (t === "/" && root.view === "changes") searchField.forceActiveFocus() }
+      onDeleteRequested: if (root.view === "list") root.askDelete(root.rows[root.cursor])
+      onTextKey: function(t) {
+        if (t === "/" && root.view === "changes") searchField.forceActiveFocus()
+        else if (t === "i" && root.view === "list") root.toggleImportant(root.rows[root.cursor])
+        else if (t === "n" && root.view === "list") descField.forceActiveFocus()
+      }
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
       Column {
@@ -482,6 +533,35 @@ Panel {
           visible: root.view === "list"
           width: parent.width
           spacing: Style.space(8)
+
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
+
+            TextField {
+              id: descField
+              width: parent.width - createButton.width - parent.spacing
+              placeholderText: "Description  ( n )"
+              maximumLength: 200
+              foreground: root.bar.foreground
+              anchors.verticalCenter: parent.verticalCenter
+              onAccepted: { root.createSnapshot(); keyCatcher.forceActiveFocus() }
+              Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+              Keys.onDownPressed: keyCatcher.forceActiveFocus()
+            }
+
+            Button {
+              id: createButton
+              text: "Snapshot now"
+              iconText: "\u{f0104}"
+              iconSpinning: manageProc.running && manageProc.args[0] === "create"
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              bordered: true
+              anchors.verticalCenter: parent.verticalCenter
+              onClicked: root.createSnapshot()
+            }
+          }
 
           PanelSectionHeader {
             text: "SNAPSHOTS"
@@ -761,7 +841,7 @@ Panel {
       }
 
       Column {
-        width: parent.width - numberText.width - starText.width - parent.spacing * 2
+        width: parent.width - numberText.width - starButton.width - deleteButton.width - parent.spacing * 3
         anchors.verticalCenter: parent.verticalCenter
         spacing: Style.space(2)
 
@@ -787,15 +867,25 @@ Panel {
         }
       }
 
-      Text {
-        id: starText
-        textFormat: Text.PlainText
-        text: row.modelData.important ? "\u{f04ce}" : ""
-        width: Style.space(18)
-        color: Color.accent
-        font.family: root.bar.fontFamily
-        font.pixelSize: Style.font.icon
+      PanelActionButton {
+        id: starButton
+        iconText: row.modelData.important ? "\u{f04ce}" : "\u{f04d2}"
+        tooltipText: row.modelData.important ? "Important: kept longer by cleanup (i)" : "Mark important (i)"
+        foreground: row.modelData.important ? Color.accent : root.dim
+        fontFamily: root.bar.fontFamily
         anchors.verticalCenter: parent.verticalCenter
+        onClicked: root.toggleImportant(row.modelData)
+      }
+
+      PanelActionButton {
+        id: deleteButton
+        iconText: "\u{f01b4}"
+        tooltipText: "Delete (x)"
+        foreground: root.dim
+        hoverColor: root.bar.urgent
+        fontFamily: root.bar.fontFamily
+        anchors.verticalCenter: parent.verticalCenter
+        onClicked: root.askDelete(row.modelData)
       }
     }
   }

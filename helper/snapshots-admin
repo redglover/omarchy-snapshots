@@ -86,6 +86,37 @@ undo)
   snapper -c "$config" undochange "$n..0" "$@"
   echo "$before"
   ;;
+create)
+  (( $# == 2 )) || die "usage: snapshots-admin create <config> <description>"
+  valid_config "$1"
+  [[ -n $2 && ${#2} -le 200 && $2 != *[[:cntrl:]]* ]] \
+    || die "description must be 1-200 characters without control characters"
+  exec snapper -c "$config" create -c number -p -d "$2"
+  ;;
+delete)
+  (( $# >= 2 )) || die "usage: snapshots-admin delete <config> <n>..."
+  valid_config "$1"
+  shift
+  for n in "$@"; do
+    valid_id "$n"
+    (( 10#$n > 0 )) || die "snapshot 0 is the live system"
+  done
+  exec snapper -c "$config" delete "$@"
+  ;;
+important)
+  (( $# >= 3 )) || die "usage: snapshots-admin important <config> <yes|no> <n>..."
+  valid_config "$1"
+  [[ $2 == yes || $2 == no ]] || die "important must be yes or no: $2"
+  value=$2
+  shift 2
+  for n in "$@"; do
+    valid_id "$n"
+    (( 10#$n > 0 )) || die "snapshot 0 is the live system"
+  done
+  for n in "$@"; do
+    snapper -c "$config" modify -u "important=$value" "$n"
+  done
+  ;;
 promote)
   (( $# == 0 )) || die "usage: snapshots-admin promote"
   re='subvol=/?@/\.snapshots/[0-9]+/snapshot'
@@ -95,6 +126,6 @@ promote)
   exec limine-snapper-restore
   ;;
 *)
-  die "usage: snapshots-admin diff <config> <a> <b> <path> | undo <config> <n> <path>... | promote"
+  die "usage: snapshots-admin diff|undo|create|delete|important|promote ..."
   ;;
 esac

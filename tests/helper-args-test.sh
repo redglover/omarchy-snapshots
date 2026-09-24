@@ -124,6 +124,21 @@ else
   fail "undo: 'before restore' snapshot"
 fi
 
+# --- snapshots-admin create / delete / important
+rejects "create: empty description" "$ADMIN" create root ""
+rejects "create: newline in description" "$ADMIN" create root $'two\nlines'
+rejects "create: description over 200 characters" "$ADMIN" create root "$(printf 'x%.0s' {1..201})"
+rejects "create: bad config" "$ADMIN" create 'ROOT' "ok"
+accepts "create: description with shell metacharacters stays literal" $'-c\nroot\ncreate\n-c\nnumber\n-p\n-d\n$(reboot); `id` & "x"' \
+  "$ADMIN" create root '$(reboot); `id` & "x"'
+rejects "delete: snapshot 0" "$ADMIN" delete root 0
+rejects "delete: non-integer id" "$ADMIN" delete root 3 '4;rm'
+rejects "delete: no ids" "$ADMIN" delete root
+accepts "delete: pre/post pair" $'-c\nroot\ndelete\n2\n3' "$ADMIN" delete root 2 3
+rejects "important: bad value" "$ADMIN" important root maybe 4
+rejects "important: non-integer id" "$ADMIN" important root yes 4.5
+accepts "important: sets userdata" $'-c\nroot\nmodify\n-u\nimportant=yes\n4' "$ADMIN" important root yes 4
+
 # --- booted / promote (read the real /proc/cmdline)
 rejects "booted: extra argument" "$READ" booted 5
 rejects "promote: extra argument" "$ADMIN" promote 5
