@@ -143,6 +143,8 @@ assert.deepEqual(entries, [
   const d = Model.classifyDiff(diff, 0)
   assert.equal(d.state, "text")
   assert.deepEqual(d.lines.map(l => l.kind), ["meta", "meta", "hunk", "ctx", "del", "add"])
+  const lua = Model.classifyDiff("--- a\n+++ b\n@@ -1 +1 @@\n--- old comment\n+++ new comment\n", 0)
+  assert.deepEqual(lua.lines.map(l => l.kind), ["meta", "meta", "hunk", "del", "add"])
   assert.equal(Model.classifyDiff("Binary files /.snapshots/5/snapshot/usr/bin/x and /usr/bin/x differ\n", 0).state, "binary")
   assert.equal(Model.classifyDiff("", 3).state, "large")
   assert.equal(Model.classifyDiff("", 0).state, "empty")

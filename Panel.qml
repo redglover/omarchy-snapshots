@@ -77,9 +77,13 @@ Panel {
     setupProc.start(["pkexec", pluginHelperDir + "/setup"])
   }
 
-  function failed(what, err) {
+  // pkexec exits 126 when the password prompt is dismissed: a choice, not an
+  // error. Returns whether an error was shown.
+  function failed(what, err, code) {
+    if (code === 126) return false
     var text = String(err || "").trim()
     error = text !== "" ? text : what + " failed"
+    return true
   }
 
   function openSnapshot(row) {
@@ -160,8 +164,11 @@ Panel {
     if (!selected || paths.length === 0) return
     var shown = paths.slice(0, 8).join("\n")
     if (paths.length > 8) shown += "\n… and " + (paths.length - 8) + " more"
+    // Files added since the snapshot didn't exist then, so restoring removes them.
+    var added = changes.filter(function(e) { return e.op === "added" && checked[e.path] }).length
     ask("restore", "Restore " + paths.length + (paths.length === 1 ? " file" : " files") + " from snapshot #" + selected.number
-      + "? The current versions are saved in a new snapshot first.\n\n" + shown, "Restore")
+      + "?" + (added > 0 ? " " + added + (added === 1 ? " was" : " were") + " added since then and will be deleted." : "")
+      + " The current versions are saved in a new snapshot first.\n\n" + shown, "Restore")
   }
 
   function restoreChecked() {
@@ -276,7 +283,7 @@ Panel {
     id: listProc
     onDone: function(code, out, err) {
       var parsed = code === 0 ? Model.parseList(out) : null
-      if (!parsed) { root.failed("Listing snapshots", err); return }
+      if (!parsed) { root.failed("Listing snapshots", err, code); return }
       root.error = ""
       root.rows = parsed
       root.listLoaded = true
@@ -290,7 +297,7 @@ Panel {
     onDone: function(code, out, err) {
       if (!root.selected) return
       if (number !== root.selected.number) { root.loadChanges(); return }
-      if (code !== 0) { root.failed("Comparing snapshot", err); return }
+      if (code !== 0) { root.failed("Comparing snapshot", err, code); return }
       root.error = ""
       root.changes = Model.parseStatus(out)
     }
@@ -302,8 +309,9 @@ Panel {
     onDone: function(code, out, err) {
       if (root.diffPath === "") return
       if (path !== root.diffPath) { root.loadDiff(); return }
+      if (code === 126) { root.back(); return }
       root.diff = Model.classifyDiff(out, code)
-      if (root.diff.state === "error") root.failed("Diff", err)
+      if (root.diff.state === "error") root.failed("Diff", err, code)
     }
   }
 
@@ -317,8 +325,7 @@ Panel {
         root.notify("Restored " + what, "From snapshot #" + number + ". The previous state is saved as snapshot #" + out.trim() + ".")
         root.checked = ({})
         root.error = ""
-      } else {
-        root.failed("Restore", err)
+      } else if (root.failed("Restore", err, code)) {
         root.notify("Restore failed", root.error)
       }
       root.loadList()
@@ -331,7 +338,7 @@ Panel {
     property var args: []
     onDone: function(code, out, err) {
       if (code !== 0) {
-        root.failed(args[0] === "create" ? "Creating snapshot" : (args[0] === "delete" ? "Deleting snapshot" : "Updating snapshot"), err)
+        root.failed(args[0] === "create" ? "Creating snapshot" : (args[0] === "delete" ? "Deleting snapshot" : "Updating snapshot"), err, code)
       } else {
         root.error = ""
         if (args[0] === "create") {
@@ -351,7 +358,7 @@ Panel {
   HelperProc {
     id: setupProc
     onDone: function(code, out, err) {
-      if (code !== 0) root.failed("Setup", err)
+      if (code !== 0) root.failed("Setup", err, code)
       root.refresh()
     }
   }
