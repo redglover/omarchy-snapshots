@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.redglover.snapshots",
+  "name": "Snapshots",
+  "version": "0.1.0",
+  "author": "redglover",
+  "description": "Browse snapper snapshots, see what changed, and restore files or the whole system",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Snapshots",
+    "description": "Browse snapper snapshots, see what changed, and restore files or the whole system",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "staleDays": 14
+    },
+    "schema": [
+      {
+        "key": "staleDays",
+        "type": "integer",
+        "label": "Warn after (days without a snapshot)",
+        "min": 1,
+        "max": 365,
+        "step": 1,
+        "defaultValue": 14
+      }
+    ]
+  }
+}

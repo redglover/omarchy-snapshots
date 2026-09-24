@@ -1,0 +1,54 @@
+#!/bin/bash
+
+# Snapshot metadata for the panel. Runs as root through pkexec without a
+# password prompt (allow_active), so it must never print file contents:
+# only snapshot lists and changed paths.
+
+set -euo pipefail
+
+die() {
+  echo "snapshots-read: $*" >&2
+  exit 2
+}
+
+valid_config() {
+  local configs
+  [[ $1 =~ ^[a-z0-9_-]+$ ]] || die "invalid config: $1"
+  configs=$(snapper --csvout list-configs | awk -F, 'NR > 1 { print $1 }')
+  grep -Fxq -- "$1" <<<"$configs" || die "unknown config: $1"
+}
+
+valid_id() {
+  [[ $1 =~ ^[0-9]+$ ]] || die "invalid snapshot id: $1"
+}
+
+cmd=${1:-}
+shift || true
+
+case $cmd in
+list)
+  (( $# == 1 )) || die "usage: snapshots-read list <config>"
+  valid_config "$1"
+  exec snapper -c "$1" --jsonout list
+  ;;
+status)
+  (( $# == 3 )) || die "usage: snapshots-read status <config> <a> <b>"
+  valid_config "$1"
+  valid_id "$2"
+  valid_id "$3"
+  exec snapper -c "$1" status "$2..$3"
+  ;;
+booted)
+  (( $# == 0 )) || die "usage: snapshots-read booted"
+  # Limine boots a snapshot as rootflags=subvol=@/.snapshots/N/snapshot.
+  re='subvol=/?@/\.snapshots/([0-9]+)/snapshot'
+  if [[ $(</proc/cmdline) =~ $re ]]; then
+    echo "snapshot ${BASH_REMATCH[1]}"
+  else
+    echo none
+  fi
+  ;;
+*)
+  die "usage: snapshots-read list <config> | status <config> <a> <b> | booted"
+  ;;
+esac

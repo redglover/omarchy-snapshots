@@ -1,0 +1,131 @@
+#!/bin/bash
+
+# Privileged snapshot actions for the panel, run as root through pkexec with
+# admin authentication (auth_admin_keep). diff lives here rather than in
+# snapshots-read because it prints file contents, /etc/shadow included.
+
+set -euo pipefail
+
+die() {
+  echo "snapshots-admin: $*" >&2
+  exit 2
+}
+
+config=""
+subvolume=""
+
+valid_config() {
+  local line
+  [[ $1 =~ ^[a-z0-9_-]+$ ]] || die "invalid config: $1"
+  line=$(snapper --csvout list-configs | awk -F, -v c="$1" 'NR > 1 && $1 == c { print }')
+  [[ -n $line ]] || die "unknown config: $1"
+  config=$1
+  subvolume=${line#*,}
+}
+
+valid_id() {
+  [[ $1 =~ ^[0-9]+$ ]] || die "invalid snapshot id: $1"
+}
+
+# Only paths snapper itself reports as changed between the two snapshots may
+# be diffed or restored, so a caller can't aim this at arbitrary files.
+valid_paths() {
+  local a=$1 b=$2 changed path
+  shift 2
+  (( $# > 0 )) || die "no paths given"
+  for path in "$@"; do
+    [[ $path == /* ]] || die "path must be absolute: $path"
+    # ponytail: also rejects names like "a..b"; a per-component check would allow them
+    [[ $path != *..* ]] || die "path may not contain '..': $path"
+    [[ $path != *$'\n'* ]] || die "path may not contain a newline"
+  done
+  changed=$(snapper -c "$config" status "$a..$b" | cut -d' ' -f2-)
+  for path in "$@"; do
+    grep -Fxq -- "$path" <<<"$changed" || die "not changed between #$a and #$b: $path"
+  done
+}
+
+# Where a path lives inside snapshot n (0 is the live system).
+snapshot_file() {
+  local root=${subvolume%/}
+  if [[ $1 == 0 ]]; then
+    echo "$2"
+  else
+    echo "$root/.snapshots/$1/snapshot${2#"$root"}"
+  fi
+}
+
+cmd=${1:-}
+shift || true
+
+case $cmd in
+diff)
+  (( $# == 4 )) || die "usage: snapshots-admin diff <config> <a> <b> <path>"
+  valid_config "$1"
+  valid_id "$2"
+  valid_id "$3"
+  valid_paths "$2" "$3" "$4"
+  # Exit 3 tells the panel "too large to show" without sending the file.
+  for file in "$(snapshot_file "$2" "$4")" "$(snapshot_file "$3" "$4")"; do
+    if [[ -f $file ]] && (( $(stat -c %s -- "$file") > 262144 )); then
+      exit 3
+    fi
+  done
+  exec snapper -c "$config" diff "$2..$3" "$4"
+  ;;
+undo)
+  (( $# >= 3 )) || die "usage: snapshots-admin undo <config> <n> <path>..."
+  valid_config "$1"
+  valid_id "$2"
+  (( 10#$2 > 0 )) || die "snapshot 0 is the live system"
+  n=$2
+  shift 2
+  valid_paths "$n" 0 "$@"
+  # Snapshot the current state first so the restore itself can be undone.
+  before=$(snapper -c "$config" create -c number -p -d "before restore from #$n")
+  snapper -c "$config" undochange "$n..0" "$@"
+  echo "$before"
+  ;;
+create)
+  (( $# == 2 )) || die "usage: snapshots-admin create <config> <description>"
+  valid_config "$1"
+  [[ -n $2 && ${#2} -le 200 && $2 != *[[:cntrl:]]* ]] \
+    || die "description must be 1-200 characters without control characters"
+  exec snapper -c "$config" create -c number -p -d "$2"
+  ;;
+delete)
+  (( $# >= 2 )) || die "usage: snapshots-admin delete <config> <n>..."
+  valid_config "$1"
+  shift
+  for n in "$@"; do
+    valid_id "$n"
+    (( 10#$n > 0 )) || die "snapshot 0 is the live system"
+  done
+  exec snapper -c "$config" delete "$@"
+  ;;
+important)
+  (( $# >= 3 )) || die "usage: snapshots-admin important <config> <yes|no> <n>..."
+  valid_config "$1"
+  [[ $2 == yes || $2 == no ]] || die "important must be yes or no: $2"
+  value=$2
+  shift 2
+  for n in "$@"; do
+    valid_id "$n"
+    (( 10#$n > 0 )) || die "snapshot 0 is the live system"
+  done
+  for n in "$@"; do
+    snapper -c "$config" modify -u "important=$value" "$n"
+  done
+  ;;
+promote)
+  (( $# == 0 )) || die "usage: snapshots-admin promote"
+  re='subvol=/?@/\.snapshots/[0-9]+/snapshot'
+  [[ $(</proc/cmdline) =~ $re ]] || die "not booted into a snapshot"
+  # Interactive: limine-snapper-sync confirms the restore and asks about
+  # rebooting, so the panel runs this in a terminal.
+  exec limine-snapper-restore
+  ;;
+*)
+  die "usage: snapshots-admin diff|undo|create|delete|important|promote ..."
+  ;;
+esac
