@@ -70,6 +70,13 @@ rejects "list: config not in list-configs" "$READ" list home
 rejects "list: missing config" "$READ" list
 rejects "list: extra argument" "$READ" list root extra
 rejects "unknown command" "$READ" rm -rf /
+# --- snapshots-read status
+rejects "status: non-integer id" "$READ" status root 1a 0
+rejects "status: negative id" "$READ" status root -1 0
+rejects "status: id with range syntax" "$READ" status root 1..2 0
+rejects "status: bad config" "$READ" status '../root' 1 0
+rejects "status: missing id" "$READ" status root 1
+accepts "status: valid call" $'-c\nroot\nstatus\n5..0' "$READ" status root 5 0
 accepts "list: valid config" $'-c\nroot\n--jsonout\nlist' "$READ" list root
 
 echo

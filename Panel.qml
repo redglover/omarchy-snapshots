@@ -29,6 +29,13 @@ Panel {
   property real nowMs: Date.now()
   property int cursor: 0
 
+  property var selected: null
+  property var changes: []
+  property string filter: ""
+  property var expanded: ({})
+  readonly property var treeItems: Model.buildTree(changes, filter, expanded)
+  readonly property string view: setupState !== "ok" ? "setup" : (selected ? "changes" : "list")
+
   readonly property bool stale: listLoaded && Model.isStale(rows, nowMs, staleDays)
   readonly property bool warning: setupState !== "ok" || stale
   readonly property color dim: Qt.darker(root.bar.foreground, 1.5)
@@ -56,12 +63,61 @@ Panel {
     error = text !== "" ? text : what + " failed"
   }
 
+  function openSnapshot(row) {
+    if (!row) return
+    selected = row
+    changes = []
+    filter = ""
+    expanded = ({})
+    cursor = 0
+    loadChanges()
+  }
+
+  // Status can take a while on old snapshots; if the user moved on to another
+  // snapshot meanwhile, onDone starts over for the current one.
+  function loadChanges() {
+    if (!selected || statusProc.running) return
+    statusProc.number = selected.number
+    statusProc.start(["pkexec", readHelper, "status", config, String(selected.number), "0"])
+  }
+
+  function toggleGroup(dir, collapsed) {
+    var next = Object.assign({}, expanded)
+    next[dir] = collapsed
+    expanded = next
+  }
+
+  function back() {
+    if (view === "changes") {
+      var index = rows.indexOf(selected)
+      selected = null
+      filter = ""
+      cursor = Math.max(0, index)
+    } else {
+      close()
+    }
+  }
+
+  function itemCount() {
+    return view === "changes" ? treeItems.length : (view === "list" ? rows.length : 0)
+  }
+
   function moveCursor(delta) {
-    cursor = Math.max(0, Math.min(rows.length - 1, cursor + delta))
+    cursor = Math.max(0, Math.min(itemCount() - 1, cursor + delta))
+  }
+
+  function activate() {
+    if (view === "setup") runSetup()
+    else if (view === "list") openSnapshot(rows[cursor])
+    else if (view === "changes") {
+      var item = treeItems[cursor]
+      if (item && item.kind === "group") toggleGroup(item.dir, item.collapsed)
+    }
   }
 
   onSetupStateChanged: if (setupState === "ok") loadList()
   onOpenedChanged: if (opened) { refresh(); cursor = 0 }
+  onFilterChanged: cursor = 0
 
   // Keeps the bar's stale dot honest without the panel being opened.
   Timer { interval: 30 * 60 * 1000; running: true; repeat: true; onTriggered: root.refresh() }
@@ -89,6 +145,18 @@ Panel {
       root.rows = parsed
       root.listLoaded = true
       root.cursor = Math.min(root.cursor, Math.max(0, parsed.length - 1))
+    }
+  }
+
+  HelperProc {
+    id: statusProc
+    property int number: -1
+    onDone: function(code, out, err) {
+      if (!root.selected) return
+      if (number !== root.selected.number) { root.loadChanges(); return }
+      if (code !== 0) { root.failed("Comparing snapshot", err); return }
+      root.error = ""
+      root.changes = Model.parseStatus(out)
     }
   }
 
@@ -138,8 +206,11 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      blocked: searchField.activeFocus
       onMoveRequested: function(dx, dy) { if (dy !== 0) root.moveCursor(dy) }
-      onCloseRequested: root.close()
+      onActivateRequested: root.activate()
+      onCloseRequested: root.back()
+      onTextKey: function(t) { if (t === "/" && root.view === "changes") searchField.forceActiveFocus() }
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
       Column {
@@ -179,7 +250,7 @@ Panel {
 
         // ---------- Setup ----------
         Column {
-          visible: root.setupState !== "ok"
+          visible: root.view === "setup"
           width: parent.width
           spacing: Style.space(10)
 
@@ -209,7 +280,7 @@ Panel {
 
         // ---------- Snapshot list ----------
         Column {
-          visible: root.setupState === "ok"
+          visible: root.view === "list"
           width: parent.width
           spacing: Style.space(8)
 
@@ -238,9 +309,88 @@ Panel {
             interactive: contentHeight > height
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
             model: root.rows
-            currentIndex: root.cursor
+            currentIndex: root.view === "list" ? root.cursor : -1
             onCurrentIndexChanged: if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
             delegate: SnapshotRow { }
+          }
+        }
+
+        // ---------- What changed ----------
+        Column {
+          visible: root.view === "changes"
+          width: parent.width
+          spacing: Style.space(8)
+
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
+
+            PanelActionButton {
+              id: backButton
+              iconText: "\u{f004d}"
+              tooltipText: "Back"
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              anchors.verticalCenter: parent.verticalCenter
+              onClicked: root.back()
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              width: parent.width - backButton.width - spinner.width - parent.spacing * 2
+              text: root.selected ? Model.numberLabel(root.selected) + "  " + (root.selected.description || "") : ""
+              color: root.bar.foreground
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.subtitle
+              font.bold: true
+              elide: Text.ElideRight
+              anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Text {
+              id: spinner
+              textFormat: Text.PlainText
+              text: "\u{f0450}"
+              opacity: statusProc.running ? 1 : 0
+              color: root.bar.foreground
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.icon
+              anchors.verticalCenter: parent.verticalCenter
+              RotationAnimation on rotation { from: 0; to: 360; duration: 900; loops: Animation.Infinite; running: statusProc.running }
+            }
+          }
+
+          TextField {
+            id: searchField
+            width: parent.width
+            placeholderText: "Search changed files  ( / )"
+            text: root.filter
+            foreground: root.bar.foreground
+            onTextChanged: root.filter = text
+            Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+            Keys.onDownPressed: keyCatcher.forceActiveFocus()
+            Keys.onReturnPressed: keyCatcher.forceActiveFocus()
+          }
+
+          PanelSectionHeader {
+            text: statusProc.running ? "COMPARING WITH NOW…"
+              : root.changes.length + " CHANGES SINCE THIS SNAPSHOT"
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+          }
+
+          ListView {
+            width: parent.width
+            height: Math.min(contentHeight, Style.space(360))
+            spacing: Style.space(2)
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            interactive: contentHeight > height
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            model: root.treeItems
+            currentIndex: root.view === "changes" ? root.cursor : -1
+            onCurrentIndexChanged: if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
+            delegate: TreeRow { }
           }
         }
       }
@@ -262,6 +412,7 @@ Panel {
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
       onContainsMouseChanged: if (containsMouse) root.cursor = row.index
+      onClicked: root.openSnapshot(row.modelData)
     }
 
     Row {
@@ -321,6 +472,70 @@ Panel {
         font.family: root.bar.fontFamily
         font.pixelSize: Style.font.icon
         anchors.verticalCenter: parent.verticalCenter
+      }
+    }
+  }
+
+  component TreeRow: CursorSurface {
+    id: item
+    required property var modelData
+    required property int index
+    readonly property bool isGroup: modelData.kind === "group"
+
+    width: ListView.view.width
+    implicitHeight: treeContent.implicitHeight + Style.space(8)
+    hasCursor: root.cursor === index
+    foreground: root.bar.foreground
+
+    MouseArea {
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onContainsMouseChanged: if (containsMouse) root.cursor = item.index
+      onClicked: root.activate()
+    }
+
+    Row {
+      id: treeContent
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      anchors.leftMargin: Style.spacing.rowPaddingX + (item.isGroup ? 0 : Style.space(16))
+      anchors.rightMargin: Style.spacing.rowPaddingX
+      spacing: Style.space(8)
+
+      Text {
+        id: marker
+        textFormat: Text.PlainText
+        width: Style.space(14)
+        text: item.isGroup ? (item.modelData.collapsed ? "\u{f0142}" : "\u{f0140}")
+          : (item.modelData.op === "added" ? "+" : (item.modelData.op === "removed" ? "−" : "~"))
+        color: item.modelData.op === "added" ? Color.accent : (item.modelData.op === "removed" ? root.bar.urgent : root.bar.foreground)
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.body
+        font.bold: true
+      }
+
+      Text {
+        textFormat: Text.PlainText
+        width: parent.width - marker.width - counts.width - parent.spacing * 2
+        text: item.isGroup ? item.modelData.dir : item.modelData.path
+        color: root.bar.foreground
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.bodySmall
+        font.bold: item.isGroup
+        elide: Text.ElideMiddle
+      }
+
+      Text {
+        id: counts
+        textFormat: Text.PlainText
+        visible: item.isGroup
+        width: visible ? implicitWidth : 0
+        text: item.isGroup ? "+" + item.modelData.added + " −" + item.modelData.removed + " ~" + item.modelData.modified : ""
+        color: root.dim
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.caption
       }
     }
   }

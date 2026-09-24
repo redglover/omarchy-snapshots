@@ -18,6 +18,10 @@ valid_config() {
   grep -Fxq -- "$1" <<<"$configs" || die "unknown config: $1"
 }
 
+valid_id() {
+  [[ $1 =~ ^[0-9]+$ ]] || die "invalid snapshot id: $1"
+}
+
 cmd=${1:-}
 shift || true
 
@@ -27,7 +31,14 @@ list)
   valid_config "$1"
   exec snapper -c "$1" --jsonout list
   ;;
+status)
+  (( $# == 3 )) || die "usage: snapshots-read status <config> <a> <b>"
+  valid_config "$1"
+  valid_id "$2"
+  valid_id "$3"
+  exec snapper -c "$1" status "$2..$3"
+  ;;
 *)
-  die "usage: snapshots-read list <config>"
+  die "usage: snapshots-read list <config> | status <config> <a> <b>"
   ;;
 esac

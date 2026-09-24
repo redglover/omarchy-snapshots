@@ -101,6 +101,60 @@ function isStale(rows, nowMs, staleDays) {
   return isNaN(newest) || nowMs - newest > staleDays * DAY_MS
 }
 
+// `snapper status a..b` lines look like "c..... /etc/motd": the first flag is
+// + (created), - (deleted), or anything else for a modification.
+function parseStatus(text) {
+  var entries = []
+  var lines = String(text || "").split("\n")
+  for (var i = 0; i < lines.length; i++) {
+    var m = /^(\S+) (\/.*)$/.exec(lines[i])
+    if (!m) continue
+    var flag = m[1].charAt(0)
+    entries.push({ op: flag === "+" ? "added" : (flag === "-" ? "removed" : "modified"), path: m[2] })
+  }
+  return entries
+}
+
+var BIG_GROUP = 20
+
+function topDir(path) {
+  var parts = String(path).split("/")
+  return parts.length > 2 ? "/" + parts[1] : "/"
+}
+
+// Group headers followed by their files, flattened for a single ListView.
+// Big groups start collapsed; `expanded` holds the user's own choices, and a
+// search opens every group so matches are never hidden.
+function buildTree(entries, filter, expanded) {
+  var needle = String(filter || "").toLowerCase()
+  var groups = {}
+  var order = []
+  for (var i = 0; i < entries.length; i++) {
+    var e = entries[i]
+    if (needle !== "" && e.path.toLowerCase().indexOf(needle) === -1) continue
+    var dir = topDir(e.path)
+    if (!groups[dir]) {
+      groups[dir] = { kind: "group", dir: dir, added: 0, removed: 0, modified: 0, files: [] }
+      order.push(dir)
+    }
+    groups[dir][e.op] += 1
+    groups[dir].files.push(e)
+  }
+  order.sort()
+
+  var items = []
+  for (var j = 0; j < order.length; j++) {
+    var g = groups[order[j]]
+    var open = needle !== "" || (expanded && expanded[g.dir] !== undefined ? expanded[g.dir] : g.files.length <= BIG_GROUP)
+    items.push({ kind: "group", dir: g.dir, added: g.added, removed: g.removed, modified: g.modified, count: g.files.length, collapsed: !open })
+    if (!open) continue
+    g.files.sort(function(a, b) { return a.path < b.path ? -1 : (a.path > b.path ? 1 : 0) })
+    for (var k = 0; k < g.files.length; k++)
+      items.push({ kind: "file", op: g.files[k].op, path: g.files[k].path })
+  }
+  return items
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     setupState: setupState,
@@ -110,6 +164,8 @@ if (typeof module !== "undefined") {
     typeLabel: typeLabel,
     numberLabel: numberLabel,
     relativeDate: relativeDate,
-    isStale: isStale
+    isStale: isStale,
+    parseStatus: parseStatus,
+    buildTree: buildTree
   }
 }

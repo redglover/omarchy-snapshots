@@ -73,4 +73,60 @@ assert.equal(Model.setupState("", "1"), "missing")
 assert.equal(Model.setupState("1\n", "1"), "ok")
 assert.equal(Model.setupState("1", "2"), "outdated")
 
+// parseStatus
+const status = [
+  "c..... /etc/motd",
+  "+..... /etc/pacman.d/new list",
+  "-..... /etc/gone.conf",
+  "..p... /usr/bin/perm-only",
+  "+..... /swapfile",
+  "",
+  "garbage line"
+].join("\n")
+const entries = Model.parseStatus(status)
+assert.deepEqual(entries, [
+  { op: "modified", path: "/etc/motd" },
+  { op: "added", path: "/etc/pacman.d/new list" },
+  { op: "removed", path: "/etc/gone.conf" },
+  { op: "modified", path: "/usr/bin/perm-only" },
+  { op: "added", path: "/swapfile" }
+])
+
+// buildTree: grouped by top-level dir, sorted, counted
+{
+  const items = Model.buildTree(entries, "", {})
+  assert.deepEqual(items.filter(i => i.kind === "group").map(g => [g.dir, g.added, g.removed, g.modified, g.count]), [
+    ["/", 1, 0, 0, 1],
+    ["/etc", 1, 1, 1, 3],
+    ["/usr", 0, 0, 1, 1]
+  ])
+  assert.deepEqual(items.map(i => i.kind === "group" ? "G " + i.dir : i.path), [
+    "G /", "/swapfile",
+    "G /etc", "/etc/gone.conf", "/etc/motd", "/etc/pacman.d/new list",
+    "G /usr", "/usr/bin/perm-only"
+  ])
+}
+
+// buildTree: big groups start collapsed, user choice and search override
+{
+  const many = []
+  for (let i = 0; i < 25; i++) many.push({ op: "added", path: `/var/cache/f${i}` })
+  many.push({ op: "modified", path: "/etc/motd" })
+  let items = Model.buildTree(many, "", {})
+  const varGroup = items.find(i => i.dir === "/var")
+  assert.equal(varGroup.collapsed, true)
+  assert.equal(varGroup.count, 25)
+  assert.equal(items.filter(i => i.kind === "file" && i.path.startsWith("/var")).length, 0)
+  assert.equal(items.find(i => i.dir === "/etc").collapsed, false)
+
+  items = Model.buildTree(many, "", { "/var": true, "/etc": false })
+  assert.equal(items.filter(i => i.kind === "file").length, 25)
+
+  items = Model.buildTree(many, "F1", {})
+  assert.deepEqual(items.filter(i => i.kind === "file").map(i => i.path),
+    ["/var/cache/f1", "/var/cache/f10", "/var/cache/f11", "/var/cache/f12", "/var/cache/f13", "/var/cache/f14", "/var/cache/f15", "/var/cache/f16", "/var/cache/f17", "/var/cache/f18", "/var/cache/f19"],
+    "search is case-insensitive, opens collapsed groups, and hides non-matching groups")
+  assert.equal(items.filter(i => i.kind === "group").length, 1)
+}
+
 console.log("model-test: ok")
