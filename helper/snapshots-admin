@@ -86,7 +86,15 @@ undo)
   snapper -c "$config" undochange "$n..0" "$@"
   echo "$before"
   ;;
+promote)
+  (( $# == 0 )) || die "usage: snapshots-admin promote"
+  re='subvol=/?@/\.snapshots/[0-9]+/snapshot'
+  [[ $(</proc/cmdline) =~ $re ]] || die "not booted into a snapshot"
+  # Interactive: limine-snapper-sync confirms the restore and asks about
+  # rebooting, so the panel runs this in a terminal.
+  exec limine-snapper-restore
+  ;;
 *)
-  die "usage: snapshots-admin diff <config> <a> <b> <path> | undo <config> <n> <path>..."
+  die "usage: snapshots-admin diff <config> <a> <b> <path> | undo <config> <n> <path>... | promote"
   ;;
 esac

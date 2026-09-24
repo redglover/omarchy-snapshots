@@ -46,6 +46,8 @@ Panel {
   property string confirmMessage: ""
   property string confirmLabel: ""
   property bool enterPressed: false
+  property int bootedSnapshot: -1
+  property bool promoteStarted: false
   readonly property string view: setupState !== "ok" ? "setup"
     : (diffPath !== "" ? "diff" : (selected ? "changes" : "list"))
 
@@ -57,7 +59,10 @@ Panel {
     nowMs = Date.now()
     installedFile.reload()
     bundledFile.reload()
-    if (setupState === "ok") loadList()
+    if (setupState === "ok") {
+      loadList()
+      if (!bootedProc.running) bootedProc.start(["pkexec", readHelper, "booted"])
+    }
   }
 
   function loadList() {
@@ -136,6 +141,16 @@ Panel {
     var action = confirmAction
     dismissConfirm()
     if (action === "restore") restoreChecked()
+    else if (action === "promote") promote()
+    else if (action === "reboot") Quickshell.execDetached(["omarchy-system-reboot"])
+  }
+
+  // limine-snapper-restore is interactive (it confirms, then asks about
+  // rebooting), so it gets a terminal. The command is a constant: nothing
+  // user-controlled reaches the shell string.
+  function promote() {
+    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", "pkexec " + adminHelper + " promote"])
+    promoteStarted = true
   }
 
   function askRestore() {
@@ -206,7 +221,7 @@ Panel {
     }
   }
 
-  onSetupStateChanged: if (setupState === "ok") loadList()
+  onSetupStateChanged: if (setupState === "ok") refresh()
   onOpenedChanged: if (opened) { refresh(); cursor = 0 }
   onFilterChanged: cursor = 0
 
@@ -279,6 +294,11 @@ Panel {
       root.loadList()
       root.loadChanges()
     }
+  }
+
+  HelperProc {
+    id: bootedProc
+    onDone: function(code, out, err) { if (code === 0) root.bootedSnapshot = Model.parseBooted(out) }
   }
 
   HelperProc {
@@ -370,6 +390,63 @@ Panel {
           width: parent.width
         }
 
+        // ---------- Booted into a snapshot ----------
+        BorderSurface {
+          visible: root.view !== "setup" && root.bootedSnapshot >= 0
+          width: parent.width
+          implicitHeight: bannerContent.implicitHeight + Style.space(20)
+          radius: Style.cornerRadius
+          color: Util.alpha(root.bar.urgent, 0.12)
+          borderSpec: Border.flat(root.bar.urgent, Style.normalBorderWidth)
+
+          Column {
+            id: bannerContent
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.margins: Style.space(10)
+            spacing: Style.space(8)
+
+            Text {
+              textFormat: Text.PlainText
+              width: parent.width
+              wrapMode: Text.WordWrap
+              color: root.bar.foreground
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+              text: root.promoteStarted
+                ? "Finish the restore in the terminal, then reboot into the restored system."
+                : "You're running snapshot #" + root.bootedSnapshot + ". Make it permanent?"
+            }
+
+            Row {
+              spacing: Style.space(8)
+
+              Button {
+                visible: !root.promoteStarted
+                text: "Make permanent"
+                iconText: "\u{f0bea}"
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+                bordered: true
+                onClicked: root.ask("promote", "Restore snapshot #" + root.bootedSnapshot
+                  + " as your system? A terminal opens to run limine-snapper-restore; follow its prompts.", "Restore")
+              }
+
+              Button {
+                visible: root.promoteStarted
+                text: "Reboot"
+                iconText: "\u{f0709}"
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+                bordered: true
+                onClicked: root.ask("reboot", "Reboot now? Open windows will be closed.", "Reboot")
+              }
+            }
+          }
+        }
+
         // ---------- Setup ----------
         Column {
           visible: root.view === "setup"
@@ -434,6 +511,33 @@ Panel {
             currentIndex: root.view === "list" ? root.cursor : -1
             onCurrentIndexChanged: if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
             delegate: SnapshotRow { }
+          }
+
+          PanelSeparator { foreground: root.bar.foreground }
+
+          PanelSectionHeader {
+            text: "RESTORE THE WHOLE SYSTEM"
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+          }
+
+          Text {
+            textFormat: Text.PlainText
+            width: parent.width
+            wrapMode: Text.WordWrap
+            color: root.dim
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            text: "1. Reboot.\n2. In the Limine boot menu, open Snapshots and pick the one to go back to.\n3. Once it's running, open this panel and choose Make permanent."
+          }
+
+          Button {
+            text: "Reboot"
+            iconText: "\u{f0709}"
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+            bordered: true
+            onClicked: root.ask("reboot", "Reboot now? Open windows will be closed. Pick a snapshot in the Limine menu.", "Reboot")
           }
         }
 

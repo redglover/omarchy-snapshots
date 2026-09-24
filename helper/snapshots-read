@@ -38,7 +38,17 @@ status)
   valid_id "$3"
   exec snapper -c "$1" status "$2..$3"
   ;;
+booted)
+  (( $# == 0 )) || die "usage: snapshots-read booted"
+  # Limine boots a snapshot as rootflags=subvol=@/.snapshots/N/snapshot.
+  re='subvol=/?@/\.snapshots/([0-9]+)/snapshot'
+  if [[ $(</proc/cmdline) =~ $re ]]; then
+    echo "snapshot ${BASH_REMATCH[1]}"
+  else
+    echo none
+  fi
+  ;;
 *)
-  die "usage: snapshots-read list <config> | status <config> <a> <b>"
+  die "usage: snapshots-read list <config> | status <config> <a> <b> | booted"
   ;;
 esac

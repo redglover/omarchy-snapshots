@@ -149,4 +149,9 @@ assert.deepEqual(entries, [
   assert.equal(Model.classifyDiff("", 2).state, "error")
 }
 
+// parseBooted
+assert.equal(Model.parseBooted("snapshot 12\n"), 12)
+assert.equal(Model.parseBooted("none\n"), -1)
+assert.equal(Model.parseBooted(""), -1)
+
 console.log("model-test: ok")

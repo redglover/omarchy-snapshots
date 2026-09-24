@@ -177,6 +177,12 @@ function classifyDiff(text, exitCode) {
   return { state: lines.length > 0 ? "text" : "empty", lines: lines }
 }
 
+// snapshots-read booted prints "snapshot N" or "none".
+function parseBooted(text) {
+  var m = /^snapshot (\d+)$/m.exec(String(text || ""))
+  return m ? Number(m[1]) : -1
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     setupState: setupState,
@@ -189,6 +195,7 @@ if (typeof module !== "undefined") {
     isStale: isStale,
     parseStatus: parseStatus,
     buildTree: buildTree,
-    classifyDiff: classifyDiff
+    classifyDiff: classifyDiff,
+    parseBooted: parseBooted
   }
 }

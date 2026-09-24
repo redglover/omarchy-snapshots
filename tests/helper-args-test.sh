@@ -25,6 +25,8 @@ case " $* " in
 esac
 STUB
 chmod +x "$T/bin/snapper"
+printf '#!/bin/bash\necho limine-snapper-restore "$@" >>"$SNAPPER_LOG"\n' >"$T/bin/limine-snapper-restore"
+chmod +x "$T/bin/limine-snapper-restore"
 export PATH="$T/bin:$PATH"
 
 failures=0
@@ -120,6 +122,23 @@ if [[ -n $create_line && -n $undo_line ]] && (( create_line < undo_line )) \
   pass "undo: creates a 'before restore' snapshot first and prints its number"
 else
   fail "undo: 'before restore' snapshot"
+fi
+
+# --- booted / promote (read the real /proc/cmdline)
+rejects "booted: extra argument" "$READ" booted 5
+rejects "promote: extra argument" "$ADMIN" promote 5
+if [[ $("$READ" booted) =~ ^(none|snapshot\ [0-9]+)$ ]]; then
+  pass "booted: prints 'none' or 'snapshot N'"
+else
+  fail "booted: unexpected output"
+fi
+if [[ $("$READ" booted) == none ]]; then
+  : >"$SNAPPER_LOG"
+  if ! "$ADMIN" promote >/dev/null 2>&1 && ! grep -q limine "$SNAPPER_LOG"; then
+    pass "promote: refused when not booted into a snapshot"
+  else
+    fail "promote: ran outside a snapshot"
+  fi
 fi
 
 echo
