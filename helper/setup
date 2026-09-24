@@ -1,0 +1,18 @@
+#!/bin/bash
+
+# Installs the snapshot helpers and their polkit policy to root-owned paths.
+# Run once through pkexec. The panel then only ever runs the installed copies,
+# so later edits to the (user-writable) plugin folder never execute as root.
+
+set -euo pipefail
+
+(( EUID == 0 )) || { echo "setup: run as root (pkexec $0)" >&2; exit 1; }
+
+src=$(dirname -- "$(readlink -f -- "$0")")
+dest=/usr/local/lib/omarchy-snapshots
+
+install -d -o root -g root -m 0755 "$dest"
+install -o root -g root -m 0755 "$src/snapshots-read" "$dest/snapshots-read"
+install -o root -g root -m 0644 "$src/io.github.redglover.snapshots.policy" /usr/share/polkit-1/actions/io.github.redglover.snapshots.policy
+# VERSION last: the panel treats it as "setup finished".
+install -o root -g root -m 0644 "$src/VERSION" "$dest/VERSION"
