@@ -155,6 +155,28 @@ function buildTree(entries, filter, expanded) {
   return items
 }
 
+// snapshots-admin diff exits 3 for files over 256 KiB; snapper's diff marks
+// binary files with a "Binary files … differ" line.
+function classifyDiff(text, exitCode) {
+  if (exitCode === 3) return { state: "large", lines: [] }
+  if (exitCode !== 0) return { state: "error", lines: [] }
+  var raw = String(text || "")
+  if (/^Binary files .* differ$/m.test(raw)) return { state: "binary", lines: [] }
+  var lines = []
+  var all = raw.split("\n")
+  for (var i = 0; i < all.length; i++) {
+    var line = all[i]
+    if (line === "" && i === all.length - 1) break
+    var kind = "ctx"
+    if (/^(\+\+\+|---) /.test(line) || /^diff /.test(line)) kind = "meta"
+    else if (line.indexOf("@@") === 0) kind = "hunk"
+    else if (line.charAt(0) === "+") kind = "add"
+    else if (line.charAt(0) === "-") kind = "del"
+    lines.push({ kind: kind, text: line })
+  }
+  return { state: lines.length > 0 ? "text" : "empty", lines: lines }
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     setupState: setupState,
@@ -166,6 +188,7 @@ if (typeof module !== "undefined") {
     relativeDate: relativeDate,
     isStale: isStale,
     parseStatus: parseStatus,
-    buildTree: buildTree
+    buildTree: buildTree,
+    classifyDiff: classifyDiff
   }
 }

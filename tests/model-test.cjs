@@ -129,4 +129,24 @@ assert.deepEqual(entries, [
   assert.equal(items.filter(i => i.kind === "group").length, 1)
 }
 
+// classifyDiff
+{
+  const diff = [
+    "--- /.snapshots/5/snapshot/etc/motd\t2026-09-20 10:00:00",
+    "+++ /etc/motd\t2026-09-24 11:00:00",
+    "@@ -1,2 +1,2 @@",
+    " Welcome",
+    "-old line",
+    "+new line",
+    ""
+  ].join("\n")
+  const d = Model.classifyDiff(diff, 0)
+  assert.equal(d.state, "text")
+  assert.deepEqual(d.lines.map(l => l.kind), ["meta", "meta", "hunk", "ctx", "del", "add"])
+  assert.equal(Model.classifyDiff("Binary files /.snapshots/5/snapshot/usr/bin/x and /usr/bin/x differ\n", 0).state, "binary")
+  assert.equal(Model.classifyDiff("", 3).state, "large")
+  assert.equal(Model.classifyDiff("", 0).state, "empty")
+  assert.equal(Model.classifyDiff("", 2).state, "error")
+}
+
 console.log("model-test: ok")

@@ -16,6 +16,7 @@ Panel {
   // step that installs those copies, and polkit asks for an admin password.
   readonly property string installDir: "/usr/local/lib/omarchy-snapshots"
   readonly property string readHelper: installDir + "/snapshots-read"
+  readonly property string adminHelper: installDir + "/snapshots-admin"
   readonly property string pluginHelperDir: decodeURIComponent(String(Qt.resolvedUrl("helper")).replace(/^file:\/\//, ""))
   readonly property string config: "root"
   readonly property int staleDays: Number(setting("staleDays", 14)) || 14
@@ -34,7 +35,11 @@ Panel {
   property string filter: ""
   property var expanded: ({})
   readonly property var treeItems: Model.buildTree(changes, filter, expanded)
-  readonly property string view: setupState !== "ok" ? "setup" : (selected ? "changes" : "list")
+  property string diffPath: ""
+  property var diff: null
+  property int diffReturnCursor: 0
+  readonly property string view: setupState !== "ok" ? "setup"
+    : (diffPath !== "" ? "diff" : (selected ? "changes" : "list"))
 
   readonly property bool stale: listLoaded && Model.isStale(rows, nowMs, staleDays)
   readonly property bool warning: setupState !== "ok" || stale
@@ -81,6 +86,19 @@ Panel {
     statusProc.start(["pkexec", readHelper, "status", config, String(selected.number), "0"])
   }
 
+  function openDiff(path) {
+    diffReturnCursor = cursor
+    diffPath = path
+    diff = null
+    loadDiff()
+  }
+
+  function loadDiff() {
+    if (diffPath === "" || diffProc.running) return
+    diffProc.path = diffPath
+    diffProc.start(["pkexec", adminHelper, "diff", config, String(selected.number), "0", diffPath])
+  }
+
   function toggleGroup(dir, collapsed) {
     var next = Object.assign({}, expanded)
     next[dir] = collapsed
@@ -88,7 +106,10 @@ Panel {
   }
 
   function back() {
-    if (view === "changes") {
+    if (view === "diff") {
+      diffPath = ""
+      cursor = diffReturnCursor
+    } else if (view === "changes") {
       var index = rows.indexOf(selected)
       selected = null
       filter = ""
@@ -103,6 +124,10 @@ Panel {
   }
 
   function moveCursor(delta) {
+    if (view === "diff") {
+      diffList.contentY = Math.max(0, Math.min(diffList.contentHeight - diffList.height, diffList.contentY + delta * Style.space(48)))
+      return
+    }
     cursor = Math.max(0, Math.min(itemCount() - 1, cursor + delta))
   }
 
@@ -112,6 +137,7 @@ Panel {
     else if (view === "changes") {
       var item = treeItems[cursor]
       if (item && item.kind === "group") toggleGroup(item.dir, item.collapsed)
+      else if (item) openDiff(item.path)
     }
   }
 
@@ -157,6 +183,17 @@ Panel {
       if (code !== 0) { root.failed("Comparing snapshot", err); return }
       root.error = ""
       root.changes = Model.parseStatus(out)
+    }
+  }
+
+  HelperProc {
+    id: diffProc
+    property string path: ""
+    onDone: function(code, out, err) {
+      if (root.diffPath === "") return
+      if (path !== root.diffPath) { root.loadDiff(); return }
+      root.diff = Model.classifyDiff(out, code)
+      if (root.diff.state === "error") root.failed("Diff", err)
     }
   }
 
@@ -312,6 +349,78 @@ Panel {
             currentIndex: root.view === "list" ? root.cursor : -1
             onCurrentIndexChanged: if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
             delegate: SnapshotRow { }
+          }
+        }
+
+        // ---------- File diff ----------
+        Column {
+          visible: root.view === "diff"
+          width: parent.width
+          spacing: Style.space(8)
+
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
+
+            PanelActionButton {
+              id: diffBack
+              iconText: "\u{f004d}"
+              tooltipText: "Back"
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              anchors.verticalCenter: parent.verticalCenter
+              onClicked: root.back()
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              width: parent.width - diffBack.width - parent.spacing
+              text: root.diffPath
+              color: root.bar.foreground
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.subtitle
+              font.bold: true
+              elide: Text.ElideMiddle
+              anchors.verticalCenter: parent.verticalCenter
+            }
+          }
+
+          Text {
+            textFormat: Text.PlainText
+            visible: text !== ""
+            width: parent.width
+            wrapMode: Text.WordWrap
+            color: root.dim
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            text: diffProc.running || !root.diff ? "Loading diff…"
+              : root.diff.state === "large" || root.diff.state === "binary" ? "Binary or large file, not shown."
+              : root.diff.state === "empty" ? "No text differences (directory, metadata, or permissions change)."
+              : ""
+          }
+
+          ListView {
+            id: diffList
+            width: parent.width
+            height: Math.min(contentHeight, Style.space(420))
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            interactive: contentHeight > height
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            model: root.diff && root.diff.state === "text" ? root.diff.lines : []
+            delegate: Text {
+              required property var modelData
+              width: ListView.view.width
+              textFormat: Text.PlainText
+              text: modelData.text
+              wrapMode: Text.WrapAnywhere
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              color: modelData.kind === "add" ? Color.accent
+                : modelData.kind === "del" ? root.bar.urgent
+                : modelData.kind === "ctx" ? root.bar.foreground
+                : root.dim
+            }
           }
         }
 

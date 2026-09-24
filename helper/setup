@@ -13,6 +13,7 @@ dest=/usr/local/lib/omarchy-snapshots
 
 install -d -o root -g root -m 0755 "$dest"
 install -o root -g root -m 0755 "$src/snapshots-read" "$dest/snapshots-read"
+install -o root -g root -m 0755 "$src/snapshots-admin" "$dest/snapshots-admin"
 install -o root -g root -m 0644 "$src/io.github.redglover.snapshots.policy" /usr/share/polkit-1/actions/io.github.redglover.snapshots.policy
 # VERSION last: the panel treats it as "setup finished".
 install -o root -g root -m 0644 "$src/VERSION" "$dest/VERSION"

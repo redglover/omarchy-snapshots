@@ -7,6 +7,7 @@ set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd)
 READ="$ROOT/helper/snapshots-read"
+ADMIN="$ROOT/helper/snapshots-admin"
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 
@@ -78,6 +79,30 @@ rejects "status: bad config" "$READ" status '../root' 1 0
 rejects "status: missing id" "$READ" status root 1
 accepts "status: valid call" $'-c\nroot\nstatus\n5..0' "$READ" status root 5 0
 accepts "list: valid config" $'-c\nroot\n--jsonout\nlist' "$READ" list root
+
+# --- snapshots-admin diff
+rejects "diff: '..' path" "$ADMIN" diff root 5 0 /etc/../etc/shadow
+rejects "diff: relative path" "$ADMIN" diff root 5 0 etc/motd
+rejects "diff: path absent from status" "$ADMIN" diff root 5 0 /etc/shadow
+rejects "diff: prefix of a changed path" "$ADMIN" diff root 5 0 /etc/mot
+rejects "diff: non-integer id" "$ADMIN" diff root five 0 /etc/motd
+rejects "diff: bad config" "$ADMIN" diff 'root$(id)' 5 0 /etc/motd
+rejects "diff: two paths" "$ADMIN" diff root 5 0 /etc/motd /etc/gone
+accepts "diff: valid call" $'-c\nroot\ndiff\n5..0\n/etc/motd' "$ADMIN" diff root 5 0 /etc/motd
+accepts "diff: path with a space stays one argument" $'-c\nroot\ndiff\n5..0\n/etc/with space' "$ADMIN" diff root 5 0 "/etc/with space"
+
+mkdir -p "$T/.snapshots/5/snapshot"
+head -c 300000 /dev/zero >"$T/.snapshots/5/snapshot/big.bin"
+: >"$SNAPPER_LOG"
+set +e
+"$ADMIN" diff big 5 0 "$T/big.bin" >"$T/out" 2>&1
+code=$?
+set -e
+if (( code == 3 )) && ! grep -qx diff "$SNAPPER_LOG"; then
+  pass "diff: file over 256 KiB exits 3 without diffing"
+else
+  fail "diff: file over 256 KiB (exit $code)"
+fi
 
 echo
 if (( failures )); then
